@@ -5,12 +5,12 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
 import gradio as gr
-import tensorflow as tf
+import tflite_runtime.interpreter as tflite
 
 # ── LOAD ARTIFACTS ─────────────────────────────────────────────────────
 # Memuat model TFLite menggunakan interpreter bawaan TensorFlow
 TFLITE_PATH = "model/mpasi_recommender.tflite"
-interpreter = tf.lite.Interpreter(model_path=TFLITE_PATH)
+interpreter = tflite.Interpreter(model_path=TFLITE_PATH)
 interpreter.allocate_tensors()
 
 # Mengambil detail indeks input dan output model (Kodenya tetap sama)
