@@ -5,15 +5,15 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
 import gradio as gr
-import tflite_runtime.interpreter as tflite  # <-- Menggunakan runtime TFLite yang super ringan
+import tensorflow as tf
 
 # ── LOAD ARTIFACTS ─────────────────────────────────────────────────────
-# Memuat model TFLite dan mengalokasikan tensor
+# Memuat model TFLite menggunakan interpreter bawaan TensorFlow
 TFLITE_PATH = "model/mpasi_recommender.tflite"
-interpreter = tflite.Interpreter(model_path=TFLITE_PATH)
+interpreter = tf.lite.Interpreter(model_path=TFLITE_PATH)
 interpreter.allocate_tensors()
 
-# Mengambil detail indeks input dan output model
+# Mengambil detail indeks input dan output model (Kodenya tetap sama)
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
@@ -25,7 +25,7 @@ with open("model/mlbs.pkl", "rb") as f:
 
 with open("model/scalers.pkl", "rb") as f:
     scalers = pickle.load(f)
-
+    
 # ── PREPROCESS ─────────────────────────────────────────────────────────
 def preprocess_user(makanan_kesukaan, potensi_alergi,
                     usia_bulan, berat_badan, tinggi_badan,
