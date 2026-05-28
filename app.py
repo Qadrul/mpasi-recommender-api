@@ -1,40 +1,21 @@
 import os
 import pickle
 import numpy as np
-import tensorflow as tf
-import keras
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
 import gradio as gr
+import tflite_runtime.interpreter as tflite  # <-- Menggunakan runtime TFLite yang super ringan
 
-# ── Custom layer (WAJIB didefinisikan sebelum load model) ──────────────
-@keras.saving.register_keras_serializable(package="mpasi")
-class PenaltyInteractionLayer(keras.Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+# ── LOAD ARTIFACTS ─────────────────────────────────────────────────────
+# Memuat model TFLite dan mengalokasikan tensor
+TFLITE_PATH = "model/mpasi_recommender.tflite"
+interpreter = tflite.Interpreter(model_path=TFLITE_PATH)
+interpreter.allocate_tensors()
 
-    def build(self, input_shape):
-        self.penalty_weight = self.add_weight(
-            name="penalty_weight",
-            shape=(1,),
-            initializer="zeros",
-            trainable=True,
-        )
-        super().build(input_shape)
-
-    def call(self, inputs):
-        score, penalty_signal = inputs
-        pw = tf.sigmoid(self.penalty_weight)
-        penalised = score * (1.0 - pw * penalty_signal)
-        return tf.clip_by_value(penalised, 0.0, 1.0)
-
-    def get_config(self):
-        return super().get_config()
-
-# ── Load artifacts ─────────────────────────────────────────────────────
-MODEL_PATH = "model/mpasi_recommender.keras"
-model = tf.keras.models.load_model(MODEL_PATH)
+# Mengambil detail indeks input dan output model
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 with open("model/feature_dims.pkl", "rb") as f:
     feature_dims = pickle.load(f)
@@ -45,7 +26,7 @@ with open("model/mlbs.pkl", "rb") as f:
 with open("model/scalers.pkl", "rb") as f:
     scalers = pickle.load(f)
 
-# ── Preprocess ─────────────────────────────────────────────────────────
+# ── PREPROCESS ─────────────────────────────────────────────────────────
 def preprocess_user(makanan_kesukaan, potensi_alergi,
                     usia_bulan, berat_badan, tinggi_badan,
                     lingkar_kepala, lingkar_lengan,
@@ -61,9 +42,11 @@ def preprocess_user(makanan_kesukaan, potensi_alergi,
 
     num_scaled = scalers["user"].transform(num)
     user_vec   = np.concatenate([mk, pa, num_scaled], axis=1)
+    
+    # TFLite wajib menerima tipe data float32 dengan bentuk array yang presisi
     return user_vec.astype(np.float32)
 
-# ── FastAPI ────────────────────────────────────────────────────────────
+# ── FASTAPI ────────────────────────────────────────────────────────────
 app = FastAPI()
 
 class RecommendRequest(BaseModel):
@@ -87,7 +70,12 @@ def recommend(req: RecommendRequest):
         req.lingkar_kepala, req.lingkar_lengan,
         req.jenis_kelamin, req.status_asi, req.jumlah_gigi,
     )
-    scores  = model.predict(user_vec, verbose=0)[0]
+    
+    # Proses Prediksi Menggunakan TFLite
+    interpreter.set_tensor(input_details[0]['index'], user_vec)
+    interpreter.invoke()
+    scores = interpreter.get_tensor(output_details[0]['index'])[0] # Mengambil array skor prediksinya
+    
     top_idx = np.argsort(scores)[::-1][:req.top_k]
     return {
         "recommendations": [
@@ -98,17 +86,22 @@ def recommend(req: RecommendRequest):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "model": "mpasi-recommender"}
+    return {"status": "ok", "model": "mpasi-recommender-tflite"}
 
-# ── Gradio UI ──────────────────────────────────────────────────────────
+# ── GRADIO UI ──────────────────────────────────────────────────────────
 def predict_ui(usia_bulan, berat_badan, tinggi_badan):
     user_vec = preprocess_user(
         [], ["Tidak Ada"],
         usia_bulan, berat_badan, tinggi_badan,
         42.0, 13.5, 1, 1, 0,
     )
-    scores  = model.predict(user_vec, verbose=0)[0]
-    top5    = np.argsort(scores)[::-1][:5]
+    
+    # Proses Prediksi Menggunakan TFLite untuk UI
+    interpreter.set_tensor(input_details[0]['index'], user_vec)
+    interpreter.invoke()
+    scores = interpreter.get_tensor(output_details[0]['index'])[0]
+    
+    top5 = np.argsort(scores)[::-1][:5]
     return {f"Rekomendasi #{i+1} (idx {idx})": round(float(scores[idx]), 4)
             for i, idx in enumerate(top5)}
 
