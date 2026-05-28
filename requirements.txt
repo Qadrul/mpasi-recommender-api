@@ -4,4 +4,3 @@ uvicorn
 pydantic
 numpy
 scikit-learn==1.6.1
-gradio==6.15.1
